@@ -1,4 +1,4 @@
-name: Build MP4Box & Push to kimycai/mp4box
+name: Build lowercase MP4Box & Push to kimycai/mp4box
 # 纯手动触发，无自动执行规则
 on:
   workflow_dispatch:
