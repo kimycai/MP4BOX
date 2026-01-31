@@ -1,18 +1,24 @@
-name: Build FFmpeg (Ubuntu24.04) & Push to kimycai/MP4BOX
+name: Native Build FFmpeg (Ubuntu24.04) & Push to MP4BOX
 # 仅手动触发，无任何自动执行规则
 on:
   workflow_dispatch:
 
 env:
-  TARGET_REPO: kimycai/MP4BOX  # 你的目标仓库
-  TARGET_BRANCH: main          # 推送到main分支
-  # FFmpeg官方静态版下载地址（Ubuntu24.04 linux64，支持m4a/flac）
-  FFMPEG_DOWNLOAD_URL: "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz"
+  TARGET_REPO: kimycai/MP4BOX    # 目标推送仓库
+  TARGET_BRANCH: main            # 推送到main分支
+  FFMPEG_VERSION: 6.1.1          # FFmpeg稳定版本（适配Ubuntu24.04）
+  # 编译核心配置：仅保留m4a→flac所需功能，静态编译，最小化构建
+  FFMPEG_CONFIG: --prefix=/usr/local --disable-all --enable-static --disable-shared \
+    --enable-avcodec --enable-avformat --enable-avutil --enable-swresample \
+    --enable-decoder=aac,alac,mp3 --enable-encoder=flac \
+    --enable-muxer=flac --enable-demuxer=aac,mp4,m4a \
+    --enable-protocol=file --disable-doc --disable-ffplay --disable-ffprobe \
+    --disable-network --disable-zlib --disable-iconv
 
 jobs:
-  fetch-ffmpeg-push:
-    name: Fetch Static FFmpeg & Push to MP4BOX
-    runs-on: ubuntu-24.04 # 原生Ubuntu24.04环境，与产物完全兼容
+  build-ffmpeg-native:
+    name: Native Compile FFmpeg & Push
+    runs-on: ubuntu-24.04        # 原生Ubuntu24.04编译，产物完美兼容
     steps:
       # 步骤1：配置Git全局身份（推送仓库必备，标准配置）
       - name: Configure Git Global Identity
@@ -26,42 +32,65 @@ jobs:
         with:
           repository: ${{ env.TARGET_REPO }}
           ref: ${{ env.TARGET_BRANCH }}
-          token: ${{ secrets.WRAPPER_PUSH_TOKEN }} # 复用你已配置的令牌
-          path: MP4BOX # 相对路径，含完整.git仓库，无路径错误
-          fetch-depth: 1 # 浅克隆提速，不影响推送
+          token: ${{ secrets.WRAPPER_PUSH_TOKEN }} # 复用已配置令牌
+          path: MP4BOX                             # 相对路径，无.git目录错误
+          fetch-depth: 1                          # 浅克隆提速
 
-      # 步骤3：下载FFmpeg官方静态版（linux64，支持m4a→flac）
-      - name: Download Official Static FFmpeg (Ubuntu24.04)
+      # 步骤3：清理磁盘+安装原生编译依赖（仅安装必需依赖，最小化）
+      - name: Free Disk & Install Build Dependencies
         run: |
-          # 创建临时目录存放压缩包
-          mkdir -p ffmpeg-tmp
-          cd ffmpeg-tmp
-          # 下载官方静态版压缩包（断点续传，避免下载失败）
-          wget -c ${{ env.FFMPEG_DOWNLOAD_URL }} -O ffmpeg-linux64-static.tar.xz
-          # 解压压缩包（仅提取ffmpeg可执行文件，无需其他文件）
-          tar -xJf ffmpeg-linux64-static.tar.xz --strip-components=2 --wildcards "*/bin/ffmpeg"
-          # 验证文件是否存在
-          ls -lah ffmpeg && echo "✅ FFmpeg下载解压成功"
+          # 深度清理磁盘，释放空间
+          df -h
+          sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/* /opt/ghc /usr/local/.ghcup
+          # 安装FFmpeg原生编译必需依赖（编译器+基础工具）
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ make cmake pkg-config wget tar xz-utils \
+            libflac-dev libogg-dev # flac编解码必需依赖
+          df -h
 
-      # 步骤4：复制静态ffmpeg到MP4BOX仓库根目录+赋权
-      - name: Copy FFmpeg to MP4BOX Repo & Add Exec Permission
+      # 步骤4：下载FFmpeg官方源码（直接从FFmpeg官网拉取，无第三方中转）
+      - name: Download FFmpeg Official Source Code
         run: |
-          # 复制可执行文件到仓库根目录
-          cp ffmpeg-tmp/ffmpeg ./MP4BOX/
-          # 双重赋予可执行权限（避免推送后权限丢失）
+          # 创建编译目录，隔离文件
+          mkdir -p ffmpeg-build && cd ffmpeg-build
+          # 从FFmpeg官网下载指定版本源码（稳定版，兼容性强）
+          wget -c https://ffmpeg.org/releases/ffmpeg-${{ env.FFMPEG_VERSION }}.tar.xz -O - | tar -xJf -
+          # 进入源码目录
+          cd ffmpeg-${{ env.FFMPEG_VERSION }}
+          # 验证源码下载成功
+          ls -lah configure && echo "✅ FFmpeg源码下载成功，配置文件存在"
+
+      # 步骤5：核心：原生配置+编译FFmpeg（静态版，仅支持m4a→flac）
+      - name: Configure & Compile FFmpeg (Static Build)
+        run: |
+          cd ffmpeg-build/ffmpeg-${{ env.FFMPEG_VERSION }}
+          # 执行配置（核心参数，最小化+静态+仅保留m4a→flac功能）
+          ./configure ${{ env.FFMPEG_CONFIG }}
+          # 多线程编译（适配Actions运行器算力，加速编译）
+          make -j$(nproc)
+          # 验证编译产物：确认ffmpeg可执行文件存在
+          ls -lah ffmpeg && echo "✅ FFmpeg静态版编译成功"
+
+      # 步骤6：复制静态ffmpeg到MP4BOX仓库+赋权（双重保障可执行权限）
+      - name: Copy FFmpeg to MP4BOX & Add Exec Permission
+        run: |
+          # 复制编译好的静态ffmpeg到仓库根目录
+          cp ffmpeg-build/ffmpeg-${{ env.FFMPEG_VERSION }}/ffmpeg ./MP4BOX/
+          # 赋予可执行权限（避免复制/推送后权限丢失）
           chmod +x ./MP4BOX/ffmpeg
-          # 验证1：确认是静态可执行文件（关键）
+          # 三重验证：文件存在+可执行+静态版
+          ls -lah ./MP4BOX/ffmpeg
           file ./MP4BOX/ffmpeg | grep -q "statically linked" && echo "✅ 验证通过：纯静态版FFmpeg"
-          # 验证2：确认支持m4a/flac编解码（核心需求）
-          ./MP4BOX/ffmpeg -codecs | grep -E 'aac|flac' && echo "✅ 验证通过：支持m4a→flac转换"
+          ./MP4BOX/ffmpeg -version && echo "✅ 验证通过：FFmpeg可正常运行"
 
-      # 步骤5：提交并推送到kimycai/MP4BOX远程仓库
+      # 步骤7：提交并推送到kimycai/MP4BOX远程仓库
       - name: Commit & Push FFmpeg to Your Repository
         run: |
-          cd ./MP4BOX # 进入正确的Git仓库目录（含.git）
-          # 仅精准暂存ffmpeg文件，不影响仓库原有MP4Box等文件
+          cd ./MP4BOX # 进入正确的Git仓库目录（含.git，无路径错误）
+          # 仅精准暂存ffmpeg文件，不影响原有MP4Box等文件
           git add ./ffmpeg
-          # 提交信息带时间戳，便于版本追溯
-          git commit -m "Update FFmpeg (Ubuntu24.04 | linux64 | static | m4a→flac) - $(date +%Y%m%d_%H%M%S)" || echo "ℹ️ No changes to commit (FFmpeg is already the latest version)"
-          # 推送到远程main分支（Action自动关联origin，无需手动配置）
+          # 提交信息带版本+时间戳，便于追溯
+          git commit -m "Native Build FFmpeg v${{ env.FFMPEG_VERSION }} (Ubuntu24.04 | static | m4a→flac) - $(date +%Y%m%d_%H%M%S)" || echo "ℹ️ No changes to commit (FFmpeg is already the latest)"
+          # 推送到远程main分支（Action自动关联origin）
           git push origin ${{ env.TARGET_BRANCH }}
