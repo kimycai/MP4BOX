@@ -129,8 +129,8 @@ jobs:
           
           Write-Host "Using MSBuild at: $msbuild"
           
-          # 编译X64 Release版本的MP4Box_only
-          & $msbuild gpac.sln /maxcpucount /t:Rebuild /p:Configuration="Release - MP4Box_only" /p:Platform=x64 /m
+          # 编译X64 Release版本的MP4Box_only，指定平台工具集
+          & $msbuild gpac.sln /maxcpucount /t:Rebuild /p:Configuration="Release - MP4Box_only" /p:Platform=x64 /p:PlatformToolset=v143 /m
 
       # 步骤4：复制编译产物到MP4BOX仓库根目录
       - name: Copy MP4Box.exe to MP4BOX Git Repo
