@@ -74,7 +74,8 @@ jobs:
       - name: Generate Commit Message
         id: generate-commit-msg
         run: |
-          $msg = "Update MP4Box.exe (static build | GPAC official | Windows) - $(Get-Date -Format 'yyyyMMdd_HHmmss')"
+          $dateStr = Get-Date -Format 'yyyyMMdd_HHmmss'
+          $msg = "Update MP4Box.exe (static build | GPAC official | Windows) - $($dateStr)"
           echo "msg=$msg" >> $env:GITHUB_OUTPUT
 
       # 步骤2：拉取GPAC官方源码（github.com/gpac/gpac.git，浅克隆提速）
