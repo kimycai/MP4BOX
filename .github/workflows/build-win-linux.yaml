@@ -66,7 +66,7 @@ jobs:
           ls -lahp ./MP4BOX/MP4Box
 
   build-mp4box-windows:
-    runs-on: ubuntu-24.04  # 使用Ubuntu交叉编译Windows版本
+    runs-on: windows-latest  # 使用Windows环境编译Windows版本
     outputs:
       commit_msg: ${{ steps.generate-commit-msg.outputs.msg }}
     steps:
@@ -74,40 +74,42 @@ jobs:
       - name: Generate Commit Message
         id: generate-commit-msg
         run: |
-          msg="Update MP4Box.exe (static build | GPAC official | Windows) - $(date +%Y%m%d_%H%M%S)"
+          msg="Update MP4Box.exe (static build | GPAC official | Windows) - $(Get-Date -Format 'yyyyMMdd_HHmmss')"
           echo "msg=$msg" >> $GITHUB_OUTPUT
 
-      # 步骤2：安装交叉编译工具链和依赖
-      - name: Install Cross-compilation Tools
+      # 步骤2：安装编译依赖
+      - name: Install Build Dependencies
         run: |
-          sudo apt update -y
-          sudo apt install -y --no-install-recommends gcc-mingw-w64-x86-64 gcc make mingw-w64-tools zlib1g-dev ca-certificates
-          sudo apt clean
-          sudo rm -rf /var/lib/apt/lists/*
-
+          # 安装MSYS2以获取编译工具
+          choco install -y msys2
+          # 刷新PATH环境变量
+          refreshenv
+          
       # 步骤3：拉取GPAC官方源码（github.com/gpac/gpac.git，浅克隆提速）
       - name: Clone GPAC Official Source Code
         run: |
-          mkdir -p gpac-build-win  # 相对路径创建编译目录，避免路径混乱
-          cd gpac-build-win
+          New-Item -ItemType Directory -Path gpac-build-win -Force
+          Set-Location gpac-build-win
           git clone --depth 1 https://github.com/gpac/gpac.git
-          cd gpac
+          Set-Location gpac
 
-      # 步骤4：静态交叉编译MP4Box for Windows
+      # 步骤4：静态编译MP4Box for Windows
       - name: Build Static MP4Box for Windows
         run: |
-          cd gpac-build-win/gpac
-          # 使用mingw-w64进行交叉编译
-          ./configure --static-mp4box --use-zlib=no --host=x86_64-w64-mingw32 --cross-prefix=x86_64-w64-mingw32-
-          make -j4
+          Set-Location gpac-build-win/gpac
+          # 使用MSYS2环境进行编译
+          # 配置编译选项
+          ./configure --static-mp4box --use-zlib=no
+          # 在MSYS2环境中运行make
+          C:\msys64\usr\bin\bash.exe -l -c "cd '$(pwd)' && make -j$(nproc)"
 
       # 步骤5：复制编译产物到MP4BOX仓库根目录
       - name: Copy MP4Box.exe to MP4BOX Git Repo
         run: |
           # 从编译目录复制产物到 ./MP4BOX（正确的Git仓库根目录）
-          cp gpac-build-win/gpac/bin/gcc/MP4Box.exe ./MP4BOX/MP4Box.exe
+          Copy-Item "gpac-build-win\gpac\bin\gcc\MP4Box.exe" -Destination "./MP4BOX/MP4Box.exe"
           # 验证产物：确认文件存在
-          ls -lahp ./MP4BOX/MP4Box.exe
+          Get-ChildItem "./MP4BOX/MP4Box.exe"
 
   push-all-binaries:
     needs: [build-mp4box-linux, build-mp4box-windows]
